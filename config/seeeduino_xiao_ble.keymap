@@ -13,6 +13,11 @@
         events = <0>;
     };
 
+    physical_layout0: physical_layout {
+        display-name = "Layout0";
+        keys = <0>;
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
