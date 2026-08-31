@@ -1,6 +1,9 @@
 / {
-    physical_layout0: physical_layout {
-        display-name = "Layout0";
-        keys = <0>;
+    chosen {
+        zmk,kscan = &kscan0;
+    };
+
+    kscan0: kscan {
+        compatible = "zmk,kscan-mock";
     };
 };
