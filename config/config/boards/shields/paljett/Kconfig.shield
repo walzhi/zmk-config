@@ -1,2 +1,0 @@
-config SHIELD_PALJETT
-    def_bool $(shields_list_contains,paljett)
