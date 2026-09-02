@@ -11,10 +11,18 @@
         input-gpios = <&gpio0 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
     };
 
+    default_transform: transform {
+        compatible = "zmk,matrix-transform";
+        columns = <1>;
+        rows = <1>;
+        map = <RC(0,0)>;
+    };
+
     physical_layout0: physical_layout_0 {
         compatible = "zmk,physical-layout";
         display-name = "Default";
         kscan = <&kscan0>;
+        transform = <&default_transform>;
         keys = <&key_physical_attrs 100 100 0 0 0 0 0>;
     };
 };
