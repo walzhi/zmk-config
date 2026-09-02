@@ -2,6 +2,11 @@
 #include <dt-bindings/zmk/keys.h>
 
 / {
+    trackpad_listener: trackpad_listener {
+        compatible = "zmk,input-listener";
+        device = <&trackpad>;
+    };
+
     keymap {
         compatible = "zmk,keymap";
         default_layer {
