@@ -27,3 +27,17 @@
         keys = <&key_physical_attrs 100 100 0 0 0 0 0>;
     };
 };
+
+&spi1 {
+    status = "okay";
+    cs-gpios = <&gpio1 12 GPIO_ACTIVE_LOW>;
+
+    trackpad: trackpad@0 {
+        compatible = "cirque,pinnacle";
+        reg = <0>;
+        spi-max-frequency = <1000000>;
+        dr-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
+        sensitivity = "4x";
+        no-taps;
+    };
+};
