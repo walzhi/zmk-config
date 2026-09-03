@@ -29,7 +29,10 @@
 };
 
 &uart0 {
-    status = "disabled";
+    status = "okay";
+    /delete-property/ pinctrl-0;
+    /delete-property/ pinctrl-1;
+    /delete-property/ pinctrl-names;
 };
 
 &pinctrl {
