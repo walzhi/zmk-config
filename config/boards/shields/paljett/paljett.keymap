@@ -1,10 +1,12 @@
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/keys.h>
+#include <input/processors.dtsi>
 
 / {
     trackpad_listener: trackpad_listener {
         compatible = "zmk,input-listener";
         device = <&trackpad>;
+        input-processors = <&zip_xy_scaler 1 4>;
     };
 
     keymap {
