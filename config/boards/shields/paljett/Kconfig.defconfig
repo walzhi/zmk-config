@@ -1,6 +1,6 @@
 if SHIELD_PALJETT
 
 config ZMK_KEYBOARD_NAME
-    default "Paljett-A"
+    default "Paljett-B"
 
 endif
