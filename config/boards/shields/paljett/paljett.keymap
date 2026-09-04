@@ -1,7 +1,17 @@
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/keys.h>
 #include <input/processors.dtsi>
-#include <dt-bindings/zmk/input_transform.h>
+#include <behaviors/input_gestures_accel.dtsi>
+
+&pointer_accel {
+    input-type = <INPUT_EV_REL>;
+    track-remainders;
+    min-factor = <700>;
+    max-factor = <4000>;
+    speed-threshold = <1000>;
+    speed-max = <6000>;
+    acceleration-exponent = <3>;
+};
 
 / {
     trackpad_listener: trackpad_listener {
