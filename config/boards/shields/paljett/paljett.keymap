@@ -2,9 +2,11 @@
 #include <dt-bindings/zmk/keys.h>
 #include <input/processors.dtsi>
 #include <behaviors/input_gestures_accel.dtsi>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
 
 &pointer_accel {
     input-type = <INPUT_EV_REL>;
+    codes = <INPUT_REL_X INPUT_REL_Y>;
     track-remainders;
     min-factor = <700>;
     max-factor = <4000>;
