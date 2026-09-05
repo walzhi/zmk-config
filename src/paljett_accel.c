@@ -1,4 +1,4 @@
-#define DT_DRV_COMPAT zmk_input_processor_paljett_accel
+#define DT_DRV_COMPAT zmk_paljett_accel
 
 #include <zephyr/device.h>
 #include <zephyr/input/input.h>
