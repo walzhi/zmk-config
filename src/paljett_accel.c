@@ -18,7 +18,7 @@ struct accel_data {
     int rest_x;
     int rest_y;
     int64_t forra_tid;
-    int fart;                 /* utjamnad fart i steg per sekund */
+    int fart;
 };
 
 static int accel_handle(const struct device *dev, struct input_event *event,
@@ -37,31 +37,29 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     if (event->code == INPUT_REL_X) {
         d->idx = (d->idx + 1) % HIST;
         d->hist_x[d->idx] = event->value;
-        d->hist_y[d->idx] = 0;
-
-        /* fart i steg per sekund, matt mot klockan */
-        int64_t nu = k_uptime_get();
-        int64_t dt = nu - d->forra_tid;
-        d->forra_tid = nu;
-        if (dt < 1) {
-            dt = 1;
-        }
-        if (dt > 100) {
-            dt = 100;          /* langre uppehall = ny rorelse */
-        }
-
-        int strackа = 0;
-        for (int i = 0; i < HIST; i++) {
-            int x = d->hist_x[i], y = d->hist_y[i];
-            strackа += (x < 0 ? -x : x) + (y < 0 ? -y : y);
-        }
-        int momentan = (strackа * 1000) / ((int)dt * HIST);
-
-        /* jamna ut farten sa faktorn inte hoppar */
-        d->fart = (d->fart * 3 + momentan) / 4;
     } else {
         d->hist_y[d->idx] = event->value;
     }
+
+    /* fart i steg per sekund, raknas for varje rapport oavsett axel */
+    int64_t nu = k_uptime_get();
+    int64_t dt = nu - d->forra_tid;
+    d->forra_tid = nu;
+    if (dt < 1) {
+        dt = 1;
+    }
+    if (dt > 100) {
+        dt = 100;
+    }
+
+    int stracka = 0;
+    for (int i = 0; i < HIST; i++) {
+        int x = d->hist_x[i], y = d->hist_y[i];
+        stracka += (x < 0 ? -x : x) + (y < 0 ? -y : y);
+    }
+    int momentan = (stracka * 1000) / ((int)dt * HIST);
+
+    d->fart = (d->fart * 3 + momentan) / 4;
 
     int factor;
     if (d->fart >= cfg->speed_max) {
@@ -73,7 +71,6 @@ static int accel_handle(const struct device *dev, struct input_event *event,
                  ((cfg->max_factor - cfg->min_factor) * t3) / 1000;
     }
 
-    /* utjamning av sjalva rorelsen */
     const int *h = (event->code == INPUT_REL_X) ? d->hist_x : d->hist_y;
     int summa = 0;
     for (int i = 0; i < HIST; i++) {
