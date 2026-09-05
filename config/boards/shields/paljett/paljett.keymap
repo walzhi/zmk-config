@@ -3,20 +3,11 @@
 #include <input/processors.dtsi>
 
 / {
-      paljett_accel: paljett_accel {
-        compatible = "zmk,paljett-accel";
-        status = "okay";
-        #input-processor-cells = <0>;
-        min-factor = <700>;
-        max-factor = <4000>;
-        speed-max = <40>;
-    };
-
     trackpad_listener: trackpad_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&trackpad>;
-        input-processors = <&paljett_accel>;
+        input-processors = <&zip_xy_scaler 1 1>;
     };
 
     keymap {
