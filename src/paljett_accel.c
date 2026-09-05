@@ -25,11 +25,15 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     int v = event->value;
     int mag = v < 0 ? -v : v;
 
-    int factor = cfg->min_factor +
-                 ((cfg->max_factor - cfg->min_factor) * mag * mag) /
-                 (cfg->speed_max * cfg->speed_max);
-    if (factor > cfg->max_factor) {
+    int factor;
+    if (mag >= cfg->speed_max) {
         factor = cfg->max_factor;
+    } else {
+        /* kubisk kurva: t^3 halls nere lange och stiger brant pa slutet */
+        int t = (mag * 1000) / cfg->speed_max;
+        int t3 = (((t * t) / 1000) * t) / 1000;
+        factor = cfg->min_factor +
+                 ((cfg->max_factor - cfg->min_factor) * t3) / 1000;
     }
 
     event->value = (v * factor) / 1000;
@@ -46,10 +50,4 @@ static int accel_init(const struct device *dev) { return 0; }
     static const struct accel_config accel_cfg_##n = {                         \
         .min_factor = DT_INST_PROP(n, min_factor),                             \
         .max_factor = DT_INST_PROP(n, max_factor),                             \
-        .speed_max = DT_INST_PROP(n, speed_max),                               \
-    };                                                                         \
-    DEVICE_DT_INST_DEFINE(n, accel_init, NULL, NULL, &accel_cfg_##n,           \
-                          POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT,    \
-                          &accel_api);
-
-DT_INST_FOREACH_STATUS_OKAY(ACCEL_INST)
+        .speed_max = DT_INST_PROP(n,
