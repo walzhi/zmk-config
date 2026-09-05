@@ -1,13 +1,24 @@
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/keys.h>
 #include <input/processors.dtsi>
+#include <behaviors/input_gestures_accel.dtsi>
+
+&pointer_accel {
+    input-type = <INPUT_EV_REL>;
+    track-remainders;
+    min-factor = <700>;
+    max-factor = <4000>;
+    speed-threshold = <1000>;
+    speed-max = <6000>;
+    acceleration-exponent = <3>;
+};
 
 / {
     trackpad_listener: trackpad_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&trackpad>;
-        input-processors = <&zip_xy_scaler 1 4>;
+        input-processors = <&pointer_accel>;
     };
 
     keymap {
