@@ -1,5 +1,3 @@
-#define DT_DRV_COMPAT zmk_paljett_accel
-
 #include <zephyr/device.h>
 #include <zephyr/input/input.h>
 #include <drivers/input_processor.h>
@@ -29,7 +27,7 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     if (mag >= cfg->speed_max) {
         factor = cfg->max_factor;
     } else {
-        /* kubisk kurva: t^3 halls nere lange och stiger brant pa slutet */
+        /* kubisk kurva: halls nere lange, stiger brant pa slutet */
         int t = (mag * 1000) / cfg->speed_max;
         int t3 = (((t * t) / 1000) * t) / 1000;
         factor = cfg->min_factor +
@@ -46,8 +44,12 @@ static const struct zmk_input_processor_driver_api accel_api = {
 
 static int accel_init(const struct device *dev) { return 0; }
 
-#define ACCEL_INST(n)                                                          \
-    static const struct accel_config accel_cfg_##n = {                         \
-        .min_factor = DT_INST_PROP(n, min_factor),                             \
-        .max_factor = DT_INST_PROP(n, max_factor),                             \
-        .speed_max = DT_INST_PROP(n,
+static const struct accel_config accel_cfg_0 = {
+    .min_factor = DT_PROP(DT_NODELABEL(paljett_accel), min_factor),
+    .max_factor = DT_PROP(DT_NODELABEL(paljett_accel), max_factor),
+    .speed_max = DT_PROP(DT_NODELABEL(paljett_accel), speed_max),
+};
+
+DEVICE_DT_DEFINE(DT_NODELABEL(paljett_accel), accel_init, NULL, NULL,
+                 &accel_cfg_0, POST_KERNEL,
+                 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &accel_api);
