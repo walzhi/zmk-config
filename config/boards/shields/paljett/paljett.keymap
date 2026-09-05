@@ -4,7 +4,7 @@
 
 / {
     paljett_accel: paljett_accel {
-        compatible = "zmk,input-processor-paljett-accel";
+        compatible = "zmk,paljett-accel";
         #input-processor-cells = <0>;
         min-factor = <400>;
         max-factor = <5000>;
