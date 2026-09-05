@@ -3,12 +3,13 @@
 #include <input/processors.dtsi>
 
 / {
-    paljett_accel: paljett_accel {
+      paljett_accel: paljett_accel {
         compatible = "zmk,paljett-accel";
+        status = "okay";
         #input-processor-cells = <0>;
-        min-factor = <400>;
-        max-factor = <5000>;
-        speed-max = <60>;
+        min-factor = <700>;
+        max-factor = <4000>;
+        speed-max = <40>;
     };
 
     trackpad_listener: trackpad_listener {
