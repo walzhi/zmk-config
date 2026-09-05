@@ -1,0 +1,4 @@
+config PALJETT_ACCEL
+    bool "Paljett pointer acceleration"
+    default y
+    depends on ZMK_POINTING
