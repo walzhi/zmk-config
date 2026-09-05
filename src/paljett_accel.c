@@ -71,14 +71,8 @@ static int accel_handle(const struct device *dev, struct input_event *event,
                  ((cfg->max_factor - cfg->min_factor) * t3) / 1000;
     }
 
-    const int *h = (event->code == INPUT_REL_X) ? d->hist_x : d->hist_y;
-    int summa = 0;
-    for (int i = 0; i < HIST; i++) {
-        summa += h[i];
-    }
-    int jamnat = (event->value * 2 + summa) / (HIST + 2);
-
-    int skalat = jamnat * factor;
+    /* ingen utjamning - varje axel skalas for sig, med sparad rest */
+    int skalat = event->value * factor;
     int *rest = (event->code == INPUT_REL_X) ? &d->rest_x : &d->rest_y;
     skalat += *rest;
     event->value = skalat / 1000;
