@@ -9,7 +9,7 @@
         #input-processor-cells = <0>;
         min-factor = <200>;
         max-factor = <1600>;
-        speed-max = <40>;
+        speed-max = <400>;
     };
 
     trackpad_listener: trackpad_listener {
