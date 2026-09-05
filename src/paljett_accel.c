@@ -1,5 +1,6 @@
 #include <zephyr/device.h>
 #include <zephyr/input/input.h>
+#include <zephyr/kernel.h>
 #include <drivers/input_processor.h>
 
 #define HIST 4
@@ -16,6 +17,8 @@ struct accel_data {
     int idx;
     int rest_x;
     int rest_y;
+    int64_t forra_tid;
+    int fart;                 /* utjamnad fart i steg per sekund */
 };
 
 static int accel_handle(const struct device *dev, struct input_event *event,
@@ -31,33 +34,46 @@ static int accel_handle(const struct device *dev, struct input_event *event,
         return 0;
     }
 
-    /* spara i historiken */
     if (event->code == INPUT_REL_X) {
         d->idx = (d->idx + 1) % HIST;
         d->hist_x[d->idx] = event->value;
+        d->hist_y[d->idx] = 0;
+
+        /* fart i steg per sekund, matt mot klockan */
+        int64_t nu = k_uptime_get();
+        int64_t dt = nu - d->forra_tid;
+        d->forra_tid = nu;
+        if (dt < 1) {
+            dt = 1;
+        }
+        if (dt > 100) {
+            dt = 100;          /* langre uppehall = ny rorelse */
+        }
+
+        int strackа = 0;
+        for (int i = 0; i < HIST; i++) {
+            int x = d->hist_x[i], y = d->hist_y[i];
+            strackа += (x < 0 ? -x : x) + (y < 0 ? -y : y);
+        }
+        int momentan = (strackа * 1000) / ((int)dt * HIST);
+
+        /* jamna ut farten sa faktorn inte hoppar */
+        d->fart = (d->fart * 3 + momentan) / 4;
     } else {
         d->hist_y[d->idx] = event->value;
     }
 
-    /* farten raknas pa hela fonstret, bada axlarna */
-    int fart = 0;
-    for (int i = 0; i < HIST; i++) {
-        int x = d->hist_x[i], y = d->hist_y[i];
-        fart += (x < 0 ? -x : x) + (y < 0 ? -y : y);
-    }
-    fart /= HIST;
-
     int factor;
-    if (fart >= cfg->speed_max) {
+    if (d->fart >= cfg->speed_max) {
         factor = cfg->max_factor;
     } else {
-        int t = (fart * 1000) / cfg->speed_max;
+        int t = (d->fart * 1000) / cfg->speed_max;
         int t3 = (((t * t) / 1000) * t) / 1000;
         factor = cfg->min_factor +
                  ((cfg->max_factor - cfg->min_factor) * t3) / 1000;
     }
 
-    /* utjamning: medelvarde over fonstret for den aktuella axeln */
+    /* utjamning av sjalva rorelsen */
     const int *h = (event->code == INPUT_REL_X) ? d->hist_x : d->hist_y;
     int summa = 0;
     for (int i = 0; i < HIST; i++) {
@@ -65,7 +81,6 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     }
     int jamnat = (event->value * 2 + summa) / (HIST + 2);
 
-    /* skalning med sparad rest sa inget forsvinner i avrundningen */
     int skalat = jamnat * factor;
     int *rest = (event->code == INPUT_REL_X) ? &d->rest_x : &d->rest_y;
     skalat += *rest;
