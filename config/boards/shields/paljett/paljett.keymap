@@ -7,7 +7,7 @@
         compatible = "zmk,paljett-accel";
         status = "okay";
         #input-processor-cells = <0>;
-        min-factor = <80>;
+        min-factor = <67>;
         max-factor = <650>;
         speed-max = <1750>;
     };
