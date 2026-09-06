@@ -270,4 +270,126 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
     } else {
         d->ut_skroll = false;
 
-        int32_t momentan = (int32_t)(((int64_t)vektorlangd(dx, dy) *
+        int32_t momentan = (int32_t)(((int64_t)vektorlangd(dx, dy) * 1000000) / dt_us);
+
+        momentan = MIN(momentan, k->fart_max * 2);
+
+        d->fart = (d->fart * (UTJAMNING - 1) + momentan) / UTJAMNING;
+
+        int32_t faktor = kurva(k, d->fart);
+
+        if (d->bordslage) {
+            if (BORDSLAGE_VAND_X) {
+                dx = -dx;
+            }
+            if (BORDSLAGE_VAND_Y) {
+                dy = -dy;
+            }
+        }
+
+        d->ack_x += dx * faktor;
+        d->ack_y += dy * faktor;
+
+        bool nog_lang = ((int64_t)d->ack_x * d->ack_x + (int64_t)d->ack_y * d->ack_y) >=
+                        ((int64_t)TROSKEL * TROSKEL);
+        bool tiden_ute = (nu - d->hall_us) >= HALL_MAX_US;
+
+        if (nog_lang || tiden_ute) {
+            int32_t ux = avrunda(d->ack_x);
+            int32_t uy = avrunda(d->ack_y);
+
+            d->ack_x -= ux * ENHET;
+            d->ack_y -= uy * ENHET;
+
+            d->ut_x += ux;
+            d->ut_y += uy;
+            d->hall_us = nu;
+        }
+    }
+
+    if (d->klick_kvar > 0) {
+        d->klick_kvar--;
+        d->ut_knapp = 1;
+    } else {
+        d->ut_knapp = 0;
+    }
+}
+
+static int paljett_hantera(const struct device *dev, struct input_event *handelse, uint32_t param1,
+                           uint32_t param2, struct zmk_input_processor_state *tillstand) {
+    ARG_UNUSED(param1);
+    ARG_UNUSED(param2);
+    ARG_UNUSED(tillstand);
+
+    struct paljett_data *d = dev->data;
+    const struct paljett_konfig *k = dev->config;
+
+    if (handelse->type != INPUT_EV_ABS) {
+        return 0;
+    }
+
+    if (handelse->code == INPUT_ABS_X) {
+        d->prov_x = handelse->value;
+
+        handelse->type = INPUT_EV_REL;
+        handelse->code = INPUT_REL_X;
+
+        if (d->ut_skroll) {
+            handelse->value = 0;
+        } else {
+            handelse->value = CLAMP(d->ut_x, -UT_TAK, UT_TAK);
+            d->ut_x -= handelse->value;
+        }
+    } else if (handelse->code == INPUT_ABS_Y) {
+        d->prov_y = handelse->value;
+
+        handelse->type = INPUT_EV_REL;
+
+        if (d->ut_skroll) {
+            handelse->code = INPUT_REL_WHEEL;
+            handelse->value = CLAMP(d->ut_hjul, -UT_TAK, UT_TAK);
+            d->ut_hjul -= handelse->value;
+        } else {
+            handelse->code = INPUT_REL_Y;
+            handelse->value = CLAMP(d->ut_y, -UT_TAK, UT_TAK);
+            d->ut_y -= handelse->value;
+        }
+    } else if (handelse->code == INPUT_ABS_Z) {
+        d->prov_z = handelse->value;
+
+        behandla_prov(d, k);
+
+        handelse->type = INPUT_EV_KEY;
+        handelse->code = INPUT_BTN_0;
+        handelse->value = d->ut_knapp;
+    }
+
+    return 0;
+}
+
+static int paljett_init(const struct device *dev) {
+    const struct paljett_konfig *k = dev->config;
+    struct paljett_data *d = dev->data;
+
+    memset(d, 0, sizeof(*d));
+
+    LOG_DBG("paljett absolut: min %d max %d fart_max %d potens %d", k->min_faktor, k->max_faktor,
+            k->fart_max, (int)KURV_POTENS);
+
+    return 0;
+}
+
+static const struct zmk_input_processor_driver_api paljett_api = {
+    .handle_event = paljett_hantera,
+};
+
+static struct paljett_data paljett_data_0;
+
+static const struct paljett_konfig paljett_konfig_0 = {
+    .min_faktor = DT_PROP(PALJETT_NOD, min_factor),
+    .max_faktor = DT_PROP(PALJETT_NOD, max_factor),
+    .fart_max = DT_PROP(PALJETT_NOD, speed_max),
+};
+
+DEVICE_DT_DEFINE(PALJETT_NOD, paljett_init, NULL, &paljett_data_0, &paljett_konfig_0, POST_KERNEL,
+                 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &paljett_api);
