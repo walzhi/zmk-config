@@ -8,7 +8,7 @@
         status = "okay";
         #input-processor-cells = <0>;
         min-factor = <60>;
-        max-factor = <550>;
+        max-factor = <700>;
         speed-max = <1500>;
     };
 
