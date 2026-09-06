@@ -52,13 +52,31 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 /* Prov som slangs direkt efter nedsattning. Det forsta ar ofta skevt. */
 #define INKORNING 2
 
-/* Skrollzonen i X-led. Plattan ar ungefar 0 till 2047 bred. Visar sig
-   zonen ligga pa fel sida, byt till 0 och 500. */
-#define SKROLL_MIN_X 1500
-#define SKROLL_MAX_X 2047
+/* Plattans mitt i absoluta koordinater. Las av i loggen och justera. */
+#define MITT_X 1024
+#define MITT_Y 768
 
-/* Steg i Y-led per hack pa hjulet. Lagre ger snabbare skroll. */
-#define SKROLL_STEG 90
+/* X och Y har olika antal steg per millimeter. Skalorna gor dem jamforbara
+   sa att vinkeln blir riktig. */
+#define X_SKALA 3
+#define Y_SKALA 4
+
+/* Fingret maste landa langre ut an sa har for att draget ska bli skroll.
+   Plattans ytterkant ligger kring 3000 i den har skalan. */
+#define SKROLL_RADIE 2000
+
+/* 0 hela ringen, 1 bara hoger halva, -1 bara vanster halva. */
+#define SKROLL_SIDA 0
+
+/* Vinkel per hack pa hjulet, i tusendels radianer. Ett helt varv ar 6283,
+   sa 300 ger ungefar tjugo hack per varv. Lagre ger snabbare skroll. */
+#define SKROLL_STEG_MRAD 300
+
+/* Vinkelandringar storre an sa har kastas som orimliga. */
+#define SKROLL_MAX_MRAD 800
+
+/* Narmare mitten an sa har blir vinkeln for brusig for att anvandas. */
+#define SKROLL_MIN_RADIE 700
 
 /* Satt 1 for att vanda skrollriktningen. */
 #define SKROLL_VAND 0
@@ -200,7 +218,14 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         d->inkorning = INKORNING;
         d->nere_us = nu;
         d->vandring = 0;
-        d->skrollzon = (x >= SKROLL_MIN_X && x <= SKROLL_MAX_X);
+        int32_t ned_nx = (x - MITT_X) * X_SKALA;
+        int32_t ned_ny = (y - MITT_Y) * Y_SKALA;
+        int64_t ned_r2 = (int64_t)ned_nx * ned_nx + (int64_t)ned_ny * ned_ny;
+
+        bool i_ringen = ned_r2 >= ((int64_t)SKROLL_RADIE * SKROLL_RADIE);
+        bool ratt_sida = (SKROLL_SIDA == 0) || (SKROLL_SIDA > 0 ? (ned_nx > 0) : (ned_nx < 0));
+
+        d->skrollzon = i_ringen && ratt_sida;
         d->ack_x = 0;
         d->ack_y = 0;
         d->ack_hjul = 0;
@@ -208,7 +233,8 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         d->prov_us = nu;
         d->hall_us = nu;
 
-        LOG_DBG("ned x %d y %d z %d skroll %d", x, y, z, (int)d->skrollzon);
+        LOG_DBG("ned x %d y %d z %d radie %d skroll %d", x, y, z,
+                vektorlangd(ned_nx, ned_ny), (int)d->skrollzon);
     } else if (!nere && d->fingret_nere) {
         d->fingret_nere = false;
         d->har_forra = false;
@@ -229,13 +255,26 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
     int32_t dx = 0;
     int32_t dy = 0;
 
+    int32_t nx1 = 0;
+    int32_t ny1 = 0;
+    int32_t nx2 = 0;
+    int32_t ny2 = 0;
+    bool har_vinkel = false;
+
     if (nere) {
+        nx2 = (x - MITT_X) * X_SKALA;
+        ny2 = (y - MITT_Y) * Y_SKALA;
+
         if (d->inkorning > 0) {
             d->inkorning--;
             d->forra_x = x;
             d->forra_y = y;
             d->har_forra = true;
         } else if (d->har_forra) {
+            nx1 = (d->forra_x - MITT_X) * X_SKALA;
+            ny1 = (d->forra_y - MITT_Y) * Y_SKALA;
+            har_vinkel = true;
+
             dx = x - d->forra_x;
             dy = y - d->forra_y;
             d->forra_x = x;
@@ -257,15 +296,30 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
     if (d->skrollzon) {
         d->ut_skroll = true;
 
-        d->ack_hjul += SKROLL_VAND ? dy : -dy;
+        /* Vinkeln kring plattans mitt, inte rorelsen i hojdled. Korsprodukten
+           delad med skalarprodukten ar tangens for vinkelandringen, och for
+           sma vinklar ar det vinkeln sjalv i tusendels radianer. Darfor
+           fortsatter skrollen at samma hall hela varvet runt. */
+        if (har_vinkel) {
+            int64_t kryss = (int64_t)nx1 * ny2 - (int64_t)ny1 * nx2;
+            int64_t prick = (int64_t)nx1 * nx2 + (int64_t)ny1 * ny2;
 
-        while (d->ack_hjul >= SKROLL_STEG) {
-            d->ut_hjul += 1;
-            d->ack_hjul -= SKROLL_STEG;
+            if (prick > ((int64_t)SKROLL_MIN_RADIE * SKROLL_MIN_RADIE)) {
+                int32_t mrad = (int32_t)((kryss * 1000) / prick);
+
+                if (mrad > -SKROLL_MAX_MRAD && mrad < SKROLL_MAX_MRAD) {
+                    d->ack_hjul += SKROLL_VAND ? -mrad : mrad;
+                }
+            }
         }
-        while (d->ack_hjul <= -SKROLL_STEG) {
+
+        while (d->ack_hjul >= SKROLL_STEG_MRAD) {
+            d->ut_hjul += 1;
+            d->ack_hjul -= SKROLL_STEG_MRAD;
+        }
+        while (d->ack_hjul <= -SKROLL_STEG_MRAD) {
             d->ut_hjul -= 1;
-            d->ack_hjul += SKROLL_STEG;
+            d->ack_hjul += SKROLL_STEG_MRAD;
         }
     } else {
         d->ut_skroll = false;
