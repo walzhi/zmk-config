@@ -1,13 +1,19 @@
 /*
- * Paljett - pekaracceleration for ZMK
+ * Paljett - styrplatta i absolutlage for ZMK
  *
- * Accelerationen raknas pa hela rorelsevektorns langd i stallet for pa
- * varje axel for sig, och avrundningsresten delas sa att bada axlarna
- * slapps ut samtidigt.
+ * Plattan rapporterar var fingret ligger. Modulen raknar fram rorelsen
+ * ur skillnaden mellan tva positioner och skriver om handelserna till
+ * relativa, sa att iOS ser en vanlig mus.
  *
- * Plattan rapporterar tappen som INPUT_BTN_TOUCH medan ZMK vantar sig
- * INPUT_BTN_0 for vansterklick, sa den koden skrivs om har.
+ * Tre handelser kommer per avlasning: ABS_X, ABS_Y och ABS_Z. Z bar
+ * sync-flaggan. De skrivs om till REL_X, REL_Y och BTN_0. Ligger fingret
+ * i skrollzonen blir Y-platsen REL_WHEEL i stallet.
+ *
+ * Fingerlyft nollstaller sparningen, annars skulle markoren kastas tvars
+ * over skarmen nar du tar om greppet.
  */
+
+#include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -22,33 +28,56 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 
 #define PALJETT_NOD DT_NODELABEL(paljett_accel)
 
-/* Faktorn ar i tusendelar. min-factor 120 betyder 0,120. */
+/* Faktorn ar i tusendelar. */
 #define ENHET 1000
 
-/* Kurvans potens. 1 rak linje, 2 mjuk boj, 3 brant. */
 #define KURV_POTENS DT_PROP_OR(PALJETT_NOD, curve_power, 3)
-
-/* Hur lang den samlade vektorn maste vara innan nagot slapps ut. */
 #define TROSKEL DT_PROP_OR(PALJETT_NOD, release_threshold, ENHET)
-
-/* Hogsta tid en rorelse far hallas kvar innan den slapps ut anda. */
 #define HALL_MAX_US DT_PROP_OR(PALJETT_NOD, hold_max_us, 24000)
 
-/* Reserv om sync-flaggan skulle utebli. */
-#define PROV_US DT_PROP_OR(PALJETT_NOD, sample_us, 3000)
-
-/* Stillhet sa har lange raknas som att fingret lyfts. */
-#define VILA_US DT_PROP_OR(PALJETT_NOD, idle_us, 200000)
-
-/* Golv och tak pa tiden mellan tva avlasningar. */
 #define DT_GOLV_US 4000
 #define DT_TAK_US 60000
-
-/* Utjamning av farten, en gang per avlasning. */
 #define UTJAMNING 16
-
-/* Sakerhetsventil mot enstaka feltolkade prov. */
 #define UT_TAK 2047
+
+/* Fingret nere respektive uppe. Z gar fran 0 till 63. Hysteres sa att
+   ett finger som vilar latt inte flimrar mellan lagena. */
+#define Z_NERE 8
+#define Z_UPPE 3
+
+/* Rorelser kortare an sa har manga steg raknas som darr och kastas.
+   Hoj om markoren kryper nar du haller stilla. */
+#define DODZON 3
+
+/* Prov som slangs direkt efter nedsattning. Det forsta ar ofta skevt. */
+#define INKORNING 2
+
+/* Skrollzonen i X-led. Plattan ar ungefar 0 till 2047 bred. Visar sig
+   zonen ligga pa fel sida, byt till 0 och 500. */
+#define SKROLL_MIN_X 1500
+#define SKROLL_MAX_X 2047
+
+/* Steg i Y-led per hack pa hjulet. Lagre ger snabbare skroll. */
+#define SKROLL_STEG 90
+
+/* Satt 1 for att vanda skrollriktningen. */
+#define SKROLL_VAND 0
+
+/* En beroring kortare an sa har, med kortare vandring an sa har,
+   raknas som en tapp. */
+#define TAPP_MAX_MS 220
+#define TAPP_MAX_ROR 120
+
+/* Antal prov som knappen halls nere, ungefar tio millisekunder per prov. */
+#define KLICK_PROV 5
+
+/* Fonster for dubbel- och trippelklick. */
+#define KLICK_FONSTER_MS 250
+
+/* Bordslaget speglar plattan. Satt 1 pa Y ocksa om du vrider ett halvt
+   varv i stallet for att vanda den. */
+#define BORDSLAGE_VAND_X 1
+#define BORDSLAGE_VAND_Y 0
 
 struct paljett_konfig {
     int32_t min_faktor;
@@ -58,24 +87,39 @@ struct paljett_konfig {
 
 struct paljett_data {
     int32_t fart;
-
-    int32_t prov_x;
-    int32_t prov_y;
-
     int32_t ack_x;
     int32_t ack_y;
-
-    int32_t ut_x;
-    int32_t ut_y;
-
-    int64_t senaste_us;
     int64_t prov_us;
     int64_t hall_us;
 
-    bool grupp_oppen;
-    bool ny_gest;
+    int32_t prov_x;
+    int32_t prov_y;
+    int32_t prov_z;
 
-    int32_t knapp_forra;
+    int32_t forra_x;
+    int32_t forra_y;
+    bool har_forra;
+    bool fingret_nere;
+    uint8_t inkorning;
+
+    int64_t nere_us;
+    int32_t vandring;
+    bool skrollzon;
+
+    int32_t ack_hjul;
+
+    uint8_t klick_rakning;
+    int64_t klick_us;
+    uint8_t klick_kvar;
+    bool klick_vantar;
+
+    int32_t ut_x;
+    int32_t ut_y;
+    int32_t ut_hjul;
+    uint8_t ut_knapp;
+    bool ut_skroll;
+
+    bool bordslage;
 };
 
 static inline int32_t belopp(int32_t v) { return v < 0 ? -v : v; }
@@ -115,147 +159,115 @@ static int32_t kurva(const struct paljett_konfig *k, int32_t fart) {
     return k->min_faktor + (int32_t)(((int64_t)(k->max_faktor - k->min_faktor) * tp) / ENHET);
 }
 
-static void nollstall(struct paljett_data *d, int64_t nu) {
-    d->fart = 0;
-    d->prov_x = 0;
-    d->prov_y = 0;
-    d->ack_x = 0;
-    d->ack_y = 0;
-    d->ut_x = 0;
-    d->ut_y = 0;
-    d->prov_us = nu;
-    d->hall_us = nu;
-    d->grupp_oppen = false;
-    d->ny_gest = true;
+/* Forsta klicket skickas direkt. Andra halls tillbaka tills fonstret
+   gatt ut. Kommer ett tredje kastas det andra och laget slas om. */
+static void hantera_tapp(struct paljett_data *d, int64_t nu) {
+    d->klick_us = nu;
+
+    if (d->klick_rakning == 0) {
+        d->klick_rakning = 1;
+        d->klick_kvar = KLICK_PROV;
+    } else if (d->klick_rakning == 1) {
+        d->klick_rakning = 2;
+        d->klick_vantar = true;
+    } else {
+        d->klick_rakning = 0;
+        d->klick_vantar = false;
+        d->bordslage = !d->bordslage;
+        LOG_DBG("bordslage %d", (int)d->bordslage);
+    }
 }
 
-static void stang_grupp(struct paljett_data *d, const struct paljett_konfig *k, int64_t nu) {
-    int32_t rx = d->prov_x;
-    int32_t ry = d->prov_y;
+static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k) {
+    int64_t nu = k_ticks_to_us_floor64(k_uptime_ticks());
+    int32_t x = d->prov_x;
+    int32_t y = d->prov_y;
+    int32_t z = d->prov_z;
 
-    d->prov_x = 0;
-    d->prov_y = 0;
-    d->grupp_oppen = false;
+    if (d->klick_rakning != 0 && (nu - d->klick_us) >= ((int64_t)KLICK_FONSTER_MS * 1000)) {
+        if (d->klick_vantar) {
+            d->klick_vantar = false;
+            d->klick_kvar = KLICK_PROV;
+        }
+        d->klick_rakning = 0;
+    }
+
+    bool nere = d->fingret_nere ? (z > Z_UPPE) : (z >= Z_NERE);
+
+    if (nere && !d->fingret_nere) {
+        d->fingret_nere = true;
+        d->har_forra = false;
+        d->inkorning = INKORNING;
+        d->nere_us = nu;
+        d->vandring = 0;
+        d->skrollzon = (x >= SKROLL_MIN_X && x <= SKROLL_MAX_X);
+        d->ack_x = 0;
+        d->ack_y = 0;
+        d->ack_hjul = 0;
+        d->fart = 0;
+        d->prov_us = nu;
+        d->hall_us = nu;
+
+        LOG_DBG("ned x %d y %d z %d skroll %d", x, y, z, (int)d->skrollzon);
+    } else if (!nere && d->fingret_nere) {
+        d->fingret_nere = false;
+        d->har_forra = false;
+
+        int64_t langd_ms = (nu - d->nere_us) / 1000;
+
+        LOG_DBG("upp %d ms vandring %d", (int)langd_ms, d->vandring);
+
+        if (!d->skrollzon && langd_ms <= TAPP_MAX_MS && d->vandring <= TAPP_MAX_ROR) {
+            hantera_tapp(d, nu);
+        }
+    }
 
     int64_t dt_us = nu - d->prov_us;
     d->prov_us = nu;
+    dt_us = CLAMP(dt_us, DT_GOLV_US, DT_TAK_US);
 
-    if (d->ny_gest) {
-        d->ny_gest = false;
-    } else {
-        dt_us = CLAMP(dt_us, DT_GOLV_US, DT_TAK_US);
+    int32_t dx = 0;
+    int32_t dy = 0;
 
-        int32_t momentan = (int32_t)(((int64_t)vektorlangd(rx, ry) * 1000000) / dt_us);
-
-        momentan = MIN(momentan, k->fart_max * 2);
-
-        d->fart = (d->fart * (UTJAMNING - 1) + momentan) / UTJAMNING;
-    }
-
-    int32_t faktor = kurva(k, d->fart);
-
-    d->ack_x += rx * faktor;
-    d->ack_y += ry * faktor;
-
-    bool nog_lang = ((int64_t)d->ack_x * d->ack_x + (int64_t)d->ack_y * d->ack_y) >=
-                    ((int64_t)TROSKEL * TROSKEL);
-    bool tiden_ute = (nu - d->hall_us) >= HALL_MAX_US;
-
-    if (!nog_lang && !tiden_ute) {
-        return;
-    }
-
-    int32_t ux = avrunda(d->ack_x);
-    int32_t uy = avrunda(d->ack_y);
-
-    d->ack_x -= ux * ENHET;
-    d->ack_y -= uy * ENHET;
-
-    d->ut_x += ux;
-    d->ut_y += uy;
-    d->hall_us = nu;
-}
-
-static int paljett_hantera(const struct device *dev, struct input_event *handelse, uint32_t param1,
-                           uint32_t param2, struct zmk_input_processor_state *tillstand) {
-    ARG_UNUSED(param1);
-    ARG_UNUSED(param2);
-    ARG_UNUSED(tillstand);
-
-    struct paljett_data *d = dev->data;
-    const struct paljett_konfig *k = dev->config;
-
-    if (handelse->type == INPUT_EV_KEY) {
-        if (handelse->code == INPUT_BTN_TOUCH) {
-            handelse->code = INPUT_BTN_0;
-        }
-
-        if (handelse->value != d->knapp_forra) {
-            d->knapp_forra = handelse->value;
-            LOG_DBG("knapp: kod %d varde %d", handelse->code, handelse->value);
-        }
-    }
-
-    bool rorelse = (handelse->type == INPUT_EV_REL) &&
-                   (handelse->code == INPUT_REL_X || handelse->code == INPUT_REL_Y);
-
-    int64_t nu = k_ticks_to_us_floor64(k_uptime_ticks());
-
-    if (rorelse) {
-        int64_t sedan = nu - d->senaste_us;
-        d->senaste_us = nu;
-
-        if (sedan > VILA_US) {
-            nollstall(d, nu);
-        } else if (d->grupp_oppen && sedan > PROV_US) {
-            stang_grupp(d, k, nu);
-        }
-
-        if (handelse->code == INPUT_REL_X) {
-            d->prov_x = handelse->value;
-            handelse->value = CLAMP(d->ut_x, -UT_TAK, UT_TAK);
-            d->ut_x -= handelse->value;
+    if (nere) {
+        if (d->inkorning > 0) {
+            d->inkorning--;
+            d->forra_x = x;
+            d->forra_y = y;
+            d->har_forra = true;
+        } else if (d->har_forra) {
+            dx = x - d->forra_x;
+            dy = y - d->forra_y;
+            d->forra_x = x;
+            d->forra_y = y;
         } else {
-            d->prov_y = handelse->value;
-            handelse->value = CLAMP(d->ut_y, -UT_TAK, UT_TAK);
-            d->ut_y -= handelse->value;
+            d->forra_x = x;
+            d->forra_y = y;
+            d->har_forra = true;
         }
-
-        d->grupp_oppen = true;
     }
 
-    if (handelse->sync && d->grupp_oppen) {
-        stang_grupp(d, k, nu);
+    if (vektorlangd(dx, dy) < DODZON) {
+        dx = 0;
+        dy = 0;
     }
 
-    return 0;
-}
+    d->vandring += vektorlangd(dx, dy);
 
-static int paljett_init(const struct device *dev) {
-    const struct paljett_konfig *k = dev->config;
-    struct paljett_data *d = dev->data;
+    if (d->skrollzon) {
+        d->ut_skroll = true;
 
-    nollstall(d, k_ticks_to_us_floor64(k_uptime_ticks()));
-    d->senaste_us = 0;
-    d->knapp_forra = 0;
+        d->ack_hjul += SKROLL_VAND ? dy : -dy;
 
-    LOG_DBG("paljett accel: min %d max %d fart_max %d potens %d troskel %d", k->min_faktor,
-            k->max_faktor, k->fart_max, (int)KURV_POTENS, (int)TROSKEL);
+        while (d->ack_hjul >= SKROLL_STEG) {
+            d->ut_hjul += 1;
+            d->ack_hjul -= SKROLL_STEG;
+        }
+        while (d->ack_hjul <= -SKROLL_STEG) {
+            d->ut_hjul -= 1;
+            d->ack_hjul += SKROLL_STEG;
+        }
+    } else {
+        d->ut_skroll = false;
 
-    return 0;
-}
-
-static const struct zmk_input_processor_driver_api paljett_api = {
-    .handle_event = paljett_hantera,
-};
-
-static struct paljett_data paljett_data_0;
-
-static const struct paljett_konfig paljett_konfig_0 = {
-    .min_faktor = DT_PROP(PALJETT_NOD, min_factor),
-    .max_faktor = DT_PROP(PALJETT_NOD, max_factor),
-    .fart_max = DT_PROP(PALJETT_NOD, speed_max),
-};
-
-DEVICE_DT_DEFINE(PALJETT_NOD, paljett_init, NULL, &paljett_data_0, &paljett_konfig_0, POST_KERNEL,
-                 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &paljett_api);
+        int32_t momentan = (int32_t)(((int64_t)vektorlangd(dx, dy) *
