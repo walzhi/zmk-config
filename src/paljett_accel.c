@@ -59,7 +59,7 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     }
     int momentan = (stracka * 1000) / ((int)dt * HIST);
 
-    d->fart = (d->fart * 3 + momentan) / 4;
+    d->fart = (d->fart * 7 + momentan) / 8;
 
     int factor;
     if (d->fart >= cfg->speed_max) {
