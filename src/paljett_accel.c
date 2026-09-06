@@ -1,13 +1,12 @@
 /*
  * Paljett - pekaracceleration for ZMK
  *
- * Kurvans potens ar stallbar. Accelerationen raknas pa hela
- * rorelsevektorns langd i stallet for pa varje axel for sig, och
- * avrundningsresten delas sa att bada axlarna slapps ut samtidigt.
+ * Accelerationen raknas pa hela rorelsevektorns langd i stallet for pa
+ * varje axel for sig, och avrundningsresten delas sa att bada axlarna
+ * slapps ut samtidigt.
  *
- * Handelser som inte ar rorelse i X eller Y slapps igenom orort, sa
- * knapptryck och tappar passerar utan att modulen ror dem. De loggas
- * ocksa, sa att det gar att se om plattan skickar dem alls.
+ * Plattan rapporterar tappen som INPUT_BTN_TOUCH medan ZMK vantar sig
+ * INPUT_BTN_0 for vansterklick, sa den koden skrivs om har.
  */
 
 #include <zephyr/device.h>
@@ -75,6 +74,8 @@ struct paljett_data {
 
     bool grupp_oppen;
     bool ny_gest;
+
+    int32_t knapp_forra;
 };
 
 static inline int32_t belopp(int32_t v) { return v < 0 ? -v : v; }
@@ -184,13 +185,19 @@ static int paljett_hantera(const struct device *dev, struct input_event *handels
     struct paljett_data *d = dev->data;
     const struct paljett_konfig *k = dev->config;
 
+    if (handelse->type == INPUT_EV_KEY) {
+        if (handelse->code == INPUT_BTN_TOUCH) {
+            handelse->code = INPUT_BTN_0;
+        }
+
+        if (handelse->value != d->knapp_forra) {
+            d->knapp_forra = handelse->value;
+            LOG_DBG("knapp: kod %d varde %d", handelse->code, handelse->value);
+        }
+    }
+
     bool rorelse = (handelse->type == INPUT_EV_REL) &&
                    (handelse->code == INPUT_REL_X || handelse->code == INPUT_REL_Y);
-
-    if (!rorelse) {
-        LOG_DBG("ovrig handelse: typ %d kod %d varde %d", handelse->type, handelse->code,
-                handelse->value);
-    }
 
     int64_t nu = k_ticks_to_us_floor64(k_uptime_ticks());
 
@@ -230,6 +237,7 @@ static int paljett_init(const struct device *dev) {
 
     nollstall(d, k_ticks_to_us_floor64(k_uptime_ticks()));
     d->senaste_us = 0;
+    d->knapp_forra = 0;
 
     LOG_DBG("paljett accel: min %d max %d fart_max %d potens %d troskel %d", k->min_faktor,
             k->max_faktor, k->fart_max, (int)KURV_POTENS, (int)TROSKEL);
