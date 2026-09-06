@@ -4,11 +4,10 @@
  * Kurvans potens ar stallbar. Accelerationen raknas pa hela
  * rorelsevektorns langd i stallet for pa varje axel for sig, och
  * avrundningsresten delas sa att bada axlarna slapps ut samtidigt.
- * Ingenting vantar pa en handelse fran den andra axeln, sa ett rent
- * vagratt drag kan inte lasa sig.
  *
  * Handelser som inte ar rorelse i X eller Y slapps igenom orort, sa
- * knapptryck och tappar passerar utan att modulen ror dem.
+ * knapptryck och tappar passerar utan att modulen ror dem. De loggas
+ * ocksa, sa att det gar att se om plattan skickar dem alls.
  */
 
 #include <zephyr/device.h>
@@ -24,10 +23,10 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 
 #define PALJETT_NOD DT_NODELABEL(paljett_accel)
 
-/* Faktorn ar i tusendelar. min-factor 67 betyder 0,067. */
+/* Faktorn ar i tusendelar. min-factor 120 betyder 0,120. */
 #define ENHET 1000
 
-/* Kurvans potens. 1 rak linje, 2 mjuk boj, 3 den branta du korde forut. */
+/* Kurvans potens. 1 rak linje, 2 mjuk boj, 3 brant. */
 #define KURV_POTENS DT_PROP_OR(PALJETT_NOD, curve_power, 3)
 
 /* Hur lang den samlade vektorn maste vara innan nagot slapps ut. */
@@ -187,6 +186,11 @@ static int paljett_hantera(const struct device *dev, struct input_event *handels
 
     bool rorelse = (handelse->type == INPUT_EV_REL) &&
                    (handelse->code == INPUT_REL_X || handelse->code == INPUT_REL_Y);
+
+    if (!rorelse) {
+        LOG_DBG("ovrig handelse: typ %d kod %d varde %d", handelse->type, handelse->code,
+                handelse->value);
+    }
 
     int64_t nu = k_ticks_to_us_floor64(k_uptime_ticks());
 
