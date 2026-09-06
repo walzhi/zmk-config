@@ -7,9 +7,9 @@
         compatible = "zmk,paljett-accel";
         status = "okay";
         #input-processor-cells = <0>;
-        min-factor = <100>;
-        max-factor = <800>;
-        speed-max = <900>;
+        min-factor = <60>;
+        max-factor = <550>;
+        speed-max = <1500>;
     };
 
     trackpad_listener: trackpad_listener {
