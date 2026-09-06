@@ -28,7 +28,7 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 #define ENHET 1000
 
 /* Kurvans potens. 1 rak linje, 2 mjuk boj, 3 den branta du korde forut. */
-#define KURV_POTENS DT_PROP_OR(PALJETT_NOD, curve_power, 2)
+#define KURV_POTENS DT_PROP_OR(PALJETT_NOD, curve_power, 3)
 
 /* Hur lang den samlade vektorn maste vara innan nagot slapps ut. */
 #define TROSKEL DT_PROP_OR(PALJETT_NOD, release_threshold, ENHET)
