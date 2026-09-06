@@ -210,4 +210,40 @@ static int paljett_hantera(const struct device *dev, struct input_event *handels
             d->ut_y -= handelse->value;
         }
 
-        d->grupp_oppen =
+        d->grupp_oppen = true;
+    }
+
+    if (handelse->sync && d->grupp_oppen) {
+        stang_grupp(d, k, nu);
+    }
+
+    return 0;
+}
+
+static int paljett_init(const struct device *dev) {
+    const struct paljett_konfig *k = dev->config;
+    struct paljett_data *d = dev->data;
+
+    nollstall(d, k_ticks_to_us_floor64(k_uptime_ticks()));
+    d->senaste_us = 0;
+
+    LOG_DBG("paljett accel: min %d max %d fart_max %d potens %d troskel %d", k->min_faktor,
+            k->max_faktor, k->fart_max, (int)KURV_POTENS, (int)TROSKEL);
+
+    return 0;
+}
+
+static const struct zmk_input_processor_driver_api paljett_api = {
+    .handle_event = paljett_hantera,
+};
+
+static struct paljett_data paljett_data_0;
+
+static const struct paljett_konfig paljett_konfig_0 = {
+    .min_faktor = DT_PROP(PALJETT_NOD, min_factor),
+    .max_faktor = DT_PROP(PALJETT_NOD, max_factor),
+    .fart_max = DT_PROP(PALJETT_NOD, speed_max),
+};
+
+DEVICE_DT_DEFINE(PALJETT_NOD, paljett_init, NULL, &paljett_data_0, &paljett_konfig_0, POST_KERNEL,
+                 CONFIG_KERNEL_INIT_PRIORITY_DEFAULT, &paljett_api);
