@@ -65,13 +65,14 @@ static int accel_handle(const struct device *dev, struct input_event *event,
     if (d->fart >= cfg->speed_max) {
         factor = cfg->max_factor;
     } else {
+        /* femte potens: platt lange, brant pa slutet */
         int t = (d->fart * 1000) / cfg->speed_max;
-        int t3 = (((t * t) / 1000) * t) / 1000;
+        int t2 = (t * t) / 1000;
+        int t5 = (((t2 * t2) / 1000) * t) / 1000;
         factor = cfg->min_factor +
-                 ((cfg->max_factor - cfg->min_factor) * t3) / 1000;
+                 ((cfg->max_factor - cfg->min_factor) * t5) / 1000;
     }
 
-    /* ingen utjamning - varje axel skalas for sig, med sparad rest */
     int skalat = event->value * factor;
     int *rest = (event->code == INPUT_REL_X) ? &d->rest_x : &d->rest_y;
     skalat += *rest;
