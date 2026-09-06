@@ -8,8 +8,8 @@
         status = "okay";
         #input-processor-cells = <0>;
         min-factor = <60>;
-        max-factor = <700>;
-        speed-max = <2500>;
+        max-factor = <1400>;
+        speed-max = <1500>;
     };
 
     trackpad_listener: trackpad_listener {
