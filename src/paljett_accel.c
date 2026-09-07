@@ -135,7 +135,7 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
    hogre ger mjukare men slapper fram mer av bagen. 1000 stanger av.
    LAS_SLAPP: sa har langt at sidan behover du styra for att laset ska
    slappa helt, i plattans steg. Hogre varde ger ett starkare las. */
-#define LAS_START 120
+#define LAS_START 500
 #define LAS_KVOT 150
 #define LAS_KVAR 150
 #define LAS_SLAPP 600
