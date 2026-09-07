@@ -104,21 +104,30 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 /* Fonster for dubbel- och trippelklick. */
 #define KLICK_FONSTER_MS 250
 
-/* Dampning av tvarrorelse. Nar ett drag ar tydligt vagratt eller lodratt
-   skalas den vinkelrata komponenten ned, sa att bagen fingret gor kring
-   knogleden inte syns. Sneda drag ror den inte, eftersom dampningen bara
-   slar till nar en axel klart dominerar, och den trappas in mjukt sa att
-   markoren aldrig kanns fastlast i ett rutnat.
+/* Axellas. Tidigt i varje drag avgor modulen om det ar lodratt, vagratt
+   eller snett. Ar det lodratt eller vagratt kastas rorelsen i tvarled
+   resten av draget, sa bagen fingret gor kring knogleden inte kan synas
+   alls. Beslutet tas en gang per drag och star fast, vilket ar skillnaden
+   mot en dampning som slapper taget just nar bagen ar som varst.
 
-   RAK_GRANS: den mindre axelns andel av den storre, i tusendelar. Ligger
-   andelen over det har raknas draget som snett och dampas inte.
-   RAK_MIN: hur lite som blir kvar av tvarrorelsen nar dampningen ar som
-   starkast. 1000 stanger av dampningen helt.
-   RAK_MIN_FART: langsammare drag an sa har dampas inte alls, sa att
-   finjustering inte motarbetas. 0 dampar alltid. */
-#define RAK_GRANS 450
-#define RAK_MIN 350
-#define RAK_MIN_FART 1500
+   LAS_START: sa har langt maste draget ha kommit innan laset bestams,
+   i plattans steg. Ungefar femtio steg per millimeter.
+   LAS_KVOT: hur mycket den ena riktningen maste dominera. 150 betyder
+   halvgangen storre. Hogre varde later fler drag vara fria.
+   Laset ar inte pa eller av utan lattar mjukt. Sa lange du bara raker ut
+   for bagen ar det starkt, och ju mer du medvetet styr at sidan desto mer
+   slapper det, tills det till sist ar helt fritt. Darfor kanns det inte
+   stelt trots att bagen forsvinner.
+
+   LAS_KVAR: hur lite som blir kvar av tvarrorelsen nar laset ar som
+   starkast, i tusendelar. Lagre ger rakare drag men styvare kansla,
+   hogre ger mjukare men slapper fram mer av bagen. 1000 stanger av.
+   LAS_SLAPP: sa har langt at sidan behover du styra for att laset ska
+   slappa helt, i plattans steg. Hogre varde ger ett starkare las. */
+#define LAS_START 120
+#define LAS_KVOT 150
+#define LAS_KVAR 150
+#define LAS_SLAPP 600
 
 /* Vridning av hela koordinatsystemet, i grader. Fingret sitter i en led
    och drar darfor inte rakt ner utan snett, sa markoren landar
@@ -162,8 +171,10 @@ struct paljett_data {
     int32_t vandring;
     bool skrollzon;
 
-    int32_t rikt_x;
-    int32_t rikt_y;
+    int32_t fl_x;
+    int32_t fl_y;
+    uint8_t las_lage;
+    int32_t tvar_fl;
 
     int32_t vrid_rest_x;
     int32_t vrid_rest_y;
@@ -331,8 +342,10 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         d->ack_hjul = 0;
         d->hjul_fart = 0;
         d->fart = 0;
-        d->rikt_x = 0;
-        d->rikt_y = 0;
+        d->fl_x = 0;
+        d->fl_y = 0;
+        d->las_lage = 0;
+        d->tvar_fl = 0;
         d->vrid_rest_x = 0;
         d->vrid_rest_y = 0;
         d->prov_us = nu;
@@ -403,6 +416,53 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
 
     d->vandring += vektorlangd(dx, dy);
 
+    if (!d->skrollzon) {
+        d->fl_x += dx;
+        d->fl_y += dy;
+
+        /* Beslutet tas en gang, nar draget hunnit bli langt nog for att
+           riktningen ska ga att lita pa. */
+        if (d->las_lage == 0) {
+            int32_t fx = belopp(d->fl_x);
+            int32_t fy = belopp(d->fl_y);
+
+            if (fx + fy >= LAS_START) {
+                if (fy * 100 >= fx * LAS_KVOT) {
+                    d->las_lage = 1;
+                } else if (fx * 100 >= fy * LAS_KVOT) {
+                    d->las_lage = 2;
+                } else {
+                    d->las_lage = 3;
+                }
+
+                LOG_DBG("las %d fx %d fy %d", (int)d->las_lage, fx, fy);
+            }
+        }
+
+        if (d->las_lage == 1 || d->las_lage == 2) {
+            /* Nettot i tvarled, inte den summerade rorelsen. Darr och sma
+               ryck tar ut varandra medan ett medvetet drag at sidan vaxer,
+               sa laset skiljer pa ofrivillig bage och avsiktlig styrning. */
+            d->tvar_fl += (d->las_lage == 1) ? dx : dy;
+
+            int32_t at_sidan = belopp(d->tvar_fl);
+
+            if (at_sidan >= LAS_SLAPP) {
+                d->las_lage = 3;
+            } else {
+                /* Laset lattar jamnt hela vagen, sa det slapper aldrig
+                   med ett ryck. */
+                int32_t kvar = LAS_KVAR + (((1000 - LAS_KVAR) * at_sidan) / LAS_SLAPP);
+
+                if (d->las_lage == 1) {
+                    dx = (int32_t)(((int64_t)dx * kvar) / 1000);
+                } else {
+                    dy = (int32_t)(((int64_t)dy * kvar) / 1000);
+                }
+            }
+        }
+    }
+
     if (d->skrollzon) {
         d->ut_skroll = true;
 
@@ -452,32 +512,6 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         momentan = MIN(momentan, k->fart_max * 2);
 
         d->fart = (d->fart * (UTJAMNING - 1) + momentan) / UTJAMNING;
-
-        /* Dragets riktning jamnas over flera prov. Ett enskilt prov ar for
-           litet och for brusigt for att avgora om draget ar axelrikt. */
-        d->rikt_x = (d->rikt_x * 7 + belopp(dx) * 100) / 8;
-        d->rikt_y = (d->rikt_y * 7 + belopp(dy) * 100) / 8;
-
-        if (RAK_MIN < 1000 && d->fart >= RAK_MIN_FART) {
-            int32_t stor = MAX(d->rikt_x, d->rikt_y);
-            int32_t liten = MIN(d->rikt_x, d->rikt_y);
-
-            if (stor > 0) {
-                int32_t andel = (int32_t)(((int64_t)liten * 1000) / stor);
-
-                if (andel < RAK_GRANS) {
-                    /* Full dampning nar andelen ar noll, ingen alls vid
-                       gransen, och en rak linje daremellan. */
-                    int32_t kvar = RAK_MIN + (((1000 - RAK_MIN) * andel) / RAK_GRANS);
-
-                    if (d->rikt_x < d->rikt_y) {
-                        dx = (int32_t)(((int64_t)dx * kvar) / 1000);
-                    } else {
-                        dy = (int32_t)(((int64_t)dy * kvar) / 1000);
-                    }
-                }
-            }
-        }
 
         int32_t faktor = kurva(k, d->fart);
 
