@@ -65,12 +65,17 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
    Plattans ytterkant ligger kring 3000 i den har skalan. */
 #define SKROLL_RADIE 2000
 
-/* 0 hela ringen, 1 bara hoger halva, -1 bara vanster halva. */
-#define SKROLL_SIDA 0
+/* 0 hela ringen, 1 bara hoger sida, -1 bara vanster sida. Visar det sig
+   att zonen hamnat pa fel sida, byt tecken. */
+#define SKROLL_SIDA 1
+
+/* Hur hogt upp och ner zonen stracker sig fran plattans mitt. Kanten
+   ligger kring 3000, sa 1536 ger en zon som tacker halva hojden. */
+#define SKROLL_MAX_NY 1536
 
 /* Vinkel per hack pa hjulet, i tusendels radianer. Ett helt varv ar 6283,
-   sa 300 ger ungefar tjugo hack per varv. Lagre ger snabbare skroll. */
-#define SKROLL_STEG_MRAD 300
+   sa 180 ger ungefar trettiofem hack per varv. Lagre ger snabbare skroll. */
+#define SKROLL_STEG_MRAD 180
 
 /* Vinkelandringar storre an sa har kastas som orimliga. */
 #define SKROLL_MAX_MRAD 800
@@ -78,8 +83,15 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 /* Narmare mitten an sa har blir vinkeln for brusig for att anvandas. */
 #define SKROLL_MIN_RADIE 700
 
-/* Satt 1 for att vanda skrollriktningen. */
-#define SKROLL_VAND 0
+/* Utjamning av vinkelfarten. Hogre ger mjukare men trogare skroll. */
+#define SKROLL_UTJAMNING 4
+
+/* Hogsta antal hack per avlasning. Taket hindrar att en ryckig avlasning
+   dumpar flera hack pa en gang, vilket kanns som ett hopp. */
+#define SKROLL_MAX_PER_PROV 1
+
+/* Satt 0 for att vanda skrollriktningen tillbaka. */
+#define SKROLL_VAND 1
 
 /* En beroring kortare an sa har, med kortare vandring an sa har,
    raknas som en tapp. */
@@ -91,6 +103,22 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 
 /* Fonster for dubbel- och trippelklick. */
 #define KLICK_FONSTER_MS 250
+
+/* Dampning av tvarrorelse. Nar ett drag ar tydligt vagratt eller lodratt
+   skalas den vinkelrata komponenten ned, sa att bagen fingret gor kring
+   knogleden inte syns. Sneda drag ror den inte, eftersom dampningen bara
+   slar till nar en axel klart dominerar, och den trappas in mjukt sa att
+   markoren aldrig kanns fastlast i ett rutnat.
+
+   RAK_GRANS: den mindre axelns andel av den storre, i tusendelar. Ligger
+   andelen over det har raknas draget som snett och dampas inte.
+   RAK_MIN: hur lite som blir kvar av tvarrorelsen nar dampningen ar som
+   starkast. 1000 stanger av dampningen helt.
+   RAK_MIN_FART: langsammare drag an sa har dampas inte alls, sa att
+   finjustering inte motarbetas. 0 dampar alltid. */
+#define RAK_GRANS 450
+#define RAK_MIN 350
+#define RAK_MIN_FART 1500
 
 /* Bordslaget speglar plattan. Satt 1 pa Y ocksa om du vrider ett halvt
    varv i stallet for att vanda den. */
@@ -124,7 +152,11 @@ struct paljett_data {
     int32_t vandring;
     bool skrollzon;
 
+    int32_t rikt_x;
+    int32_t rikt_y;
+
     int32_t ack_hjul;
+    int32_t hjul_fart;
 
     uint8_t klick_rakning;
     int64_t klick_us;
@@ -224,12 +256,19 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
 
         bool i_ringen = ned_r2 >= ((int64_t)SKROLL_RADIE * SKROLL_RADIE);
         bool ratt_sida = (SKROLL_SIDA == 0) || (SKROLL_SIDA > 0 ? (ned_nx > 0) : (ned_nx < 0));
+        bool ratt_hojd = belopp(ned_ny) <= SKROLL_MAX_NY;
 
-        d->skrollzon = i_ringen && ratt_sida;
+        /* Zonen provas bara vid nedsattning. Har draget val borjat som
+           skroll fortsatter det vara skroll hela varvet runt, oavsett var
+           pa plattan fingret hamnar. */
+        d->skrollzon = i_ringen && ratt_sida && ratt_hojd;
         d->ack_x = 0;
         d->ack_y = 0;
         d->ack_hjul = 0;
+        d->hjul_fart = 0;
         d->fart = 0;
+        d->rikt_x = 0;
+        d->rikt_y = 0;
         d->prov_us = nu;
         d->hall_us = nu;
 
@@ -303,24 +342,37 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         if (har_vinkel) {
             int64_t kryss = (int64_t)nx1 * ny2 - (int64_t)ny1 * nx2;
             int64_t prick = (int64_t)nx1 * nx2 + (int64_t)ny1 * ny2;
+            int32_t mrad = 0;
 
             if (prick > ((int64_t)SKROLL_MIN_RADIE * SKROLL_MIN_RADIE)) {
-                int32_t mrad = (int32_t)((kryss * 1000) / prick);
+                int32_t matt = (int32_t)((kryss * 1000) / prick);
 
-                if (mrad > -SKROLL_MAX_MRAD && mrad < SKROLL_MAX_MRAD) {
-                    d->ack_hjul += SKROLL_VAND ? -mrad : mrad;
+                if (matt > -SKROLL_MAX_MRAD && matt < SKROLL_MAX_MRAD) {
+                    mrad = matt;
                 }
             }
+
+            /* Vinkelfarten jamnas ut sa att enstaka skakiga avlasningar
+               inte syns som hack. Utjamningen tappar ingen vinkel, den
+               fordelar den bara over nagra fler avlasningar. */
+            d->hjul_fart = (d->hjul_fart * (SKROLL_UTJAMNING - 1) + mrad) / SKROLL_UTJAMNING;
+
+            d->ack_hjul += SKROLL_VAND ? -d->hjul_fart : d->hjul_fart;
+            d->ack_hjul = CLAMP(d->ack_hjul, -SKROLL_STEG_MRAD * 4, SKROLL_STEG_MRAD * 4);
         }
 
-        while (d->ack_hjul >= SKROLL_STEG_MRAD) {
-            d->ut_hjul += 1;
+        int32_t hack = 0;
+
+        while (d->ack_hjul >= SKROLL_STEG_MRAD && hack < SKROLL_MAX_PER_PROV) {
+            hack++;
             d->ack_hjul -= SKROLL_STEG_MRAD;
         }
-        while (d->ack_hjul <= -SKROLL_STEG_MRAD) {
-            d->ut_hjul -= 1;
+        while (d->ack_hjul <= -SKROLL_STEG_MRAD && hack > -SKROLL_MAX_PER_PROV) {
+            hack--;
             d->ack_hjul += SKROLL_STEG_MRAD;
         }
+
+        d->ut_hjul += hack;
     } else {
         d->ut_skroll = false;
 
@@ -329,6 +381,32 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         momentan = MIN(momentan, k->fart_max * 2);
 
         d->fart = (d->fart * (UTJAMNING - 1) + momentan) / UTJAMNING;
+
+        /* Dragets riktning jamnas over flera prov. Ett enskilt prov ar for
+           litet och for brusigt for att avgora om draget ar axelrikt. */
+        d->rikt_x = (d->rikt_x * 7 + belopp(dx) * 100) / 8;
+        d->rikt_y = (d->rikt_y * 7 + belopp(dy) * 100) / 8;
+
+        if (RAK_MIN < 1000 && d->fart >= RAK_MIN_FART) {
+            int32_t stor = MAX(d->rikt_x, d->rikt_y);
+            int32_t liten = MIN(d->rikt_x, d->rikt_y);
+
+            if (stor > 0) {
+                int32_t andel = (int32_t)(((int64_t)liten * 1000) / stor);
+
+                if (andel < RAK_GRANS) {
+                    /* Full dampning nar andelen ar noll, ingen alls vid
+                       gransen, och en rak linje daremellan. */
+                    int32_t kvar = RAK_MIN + (((1000 - RAK_MIN) * andel) / RAK_GRANS);
+
+                    if (d->rikt_x < d->rikt_y) {
+                        dx = (int32_t)(((int64_t)dx * kvar) / 1000);
+                    } else {
+                        dy = (int32_t)(((int64_t)dy * kvar) / 1000);
+                    }
+                }
+            }
+        }
 
         int32_t faktor = kurva(k, d->fart);
 
