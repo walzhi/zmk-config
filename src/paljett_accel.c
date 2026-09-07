@@ -118,7 +118,17 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
    finjustering inte motarbetas. 0 dampar alltid. */
 #define RAK_GRANS 450
 #define RAK_MIN 350
-#define RAK_MIN_FART 400
+#define RAK_MIN_FART 1500
+
+/* Vridning av hela koordinatsystemet, i grader. Fingret sitter i en led
+   och drar darfor inte rakt ner utan snett, sa markoren landar
+   systematiskt vid sidan av. En vridning lagger plattans axlar dar dina
+   drag faktiskt gar i stallet for tvartom.
+
+   Positivt varde rattar ett drag som glider at hoger nar du drar ner.
+   Glider det at vanster, satt ett negativt varde. 0 stanger av.
+   Borja pa 10, prova sedan 15 och 20. */
+#define VRID_GRADER 10
 
 /* Bordslaget speglar plattan. Satt 1 pa Y ocksa om du vrider ett halvt
    varv i stallet for att vanda den. */
@@ -154,6 +164,9 @@ struct paljett_data {
 
     int32_t rikt_x;
     int32_t rikt_y;
+
+    int32_t vrid_rest_x;
+    int32_t vrid_rest_y;
 
     int32_t ack_hjul;
     int32_t hjul_fart;
@@ -207,6 +220,57 @@ static int32_t kurva(const struct paljett_konfig *k, int32_t fart) {
     }
 
     return k->min_faktor + (int32_t)(((int64_t)(k->max_faktor - k->min_faktor) * tp) / ENHET);
+}
+
+/* Sinus i tusendelar for 0 till 90 grader. Cosinus fas som sinus for
+   nittio minus vinkeln, sa en tabell racker. */
+static const int16_t sinus_tusendelar[91] = {
+    0, 17, 35, 52, 70, 87, 105, 122, 139, 156,
+    174, 191, 208, 225, 242, 259, 276, 292, 309, 326,
+    342, 358, 375, 391, 407, 423, 438, 454, 469, 485,
+    500, 515, 530, 545, 559, 574, 588, 602, 616, 629,
+    643, 656, 669, 682, 695, 707, 719, 731, 743, 755,
+    766, 777, 788, 799, 809, 819, 829, 839, 848, 857,
+    866, 875, 883, 891, 899, 906, 914, 921, 927, 934,
+    940, 946, 951, 956, 961, 966, 970, 974, 978, 982,
+    985, 988, 990, 993, 995, 996, 998, 999, 999, 1000,
+    1000
+};
+
+/* Vrider rorelsen. Resten sparas i tusendelar sa att inget gar forlorat
+   nar sma rorelser vrids och avrundas. */
+static void vrid_rorelse(struct paljett_data *d, int32_t *px, int32_t *py) {
+    if (VRID_GRADER == 0) {
+        return;
+    }
+
+    int32_t grader = VRID_GRADER < 0 ? -VRID_GRADER : VRID_GRADER;
+
+    if (grader > 90) {
+        grader = 90;
+    }
+
+    int32_t sin_v = sinus_tusendelar[grader];
+    int32_t cos_v = sinus_tusendelar[90 - grader];
+
+    if (VRID_GRADER < 0) {
+        sin_v = -sin_v;
+    }
+
+    int32_t x = *px;
+    int32_t y = *py;
+
+    int32_t rx = (int32_t)(((int64_t)x * cos_v - (int64_t)y * sin_v)) + d->vrid_rest_x;
+    int32_t ry = (int32_t)(((int64_t)x * sin_v + (int64_t)y * cos_v)) + d->vrid_rest_y;
+
+    int32_t ux = rx / 1000;
+    int32_t uy = ry / 1000;
+
+    d->vrid_rest_x = rx - ux * 1000;
+    d->vrid_rest_y = ry - uy * 1000;
+
+    *px = ux;
+    *py = uy;
 }
 
 /* Forsta klicket skickas direkt. Andra halls tillbaka tills fonstret
@@ -269,6 +333,8 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         d->fart = 0;
         d->rikt_x = 0;
         d->rikt_y = 0;
+        d->vrid_rest_x = 0;
+        d->vrid_rest_y = 0;
         d->prov_us = nu;
         d->hall_us = nu;
 
@@ -329,6 +395,11 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         dx = 0;
         dy = 0;
     }
+
+    /* Vrids tidigt, sa att dampningen langre ner arbetar mot de riktiga
+       skarmaxlarna och inte mot plattans. Skrollen paverkas inte, den
+       raknar vinklar kring mitten och ror inte dx och dy. */
+    vrid_rorelse(d, &dx, &dy);
 
     d->vandring += vektorlangd(dx, dy);
 
