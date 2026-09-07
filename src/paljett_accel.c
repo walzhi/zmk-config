@@ -45,9 +45,20 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
 #define Z_NERE 8
 #define Z_UPPE 3
 
-/* Rorelser kortare an sa har manga steg raknas som darr och kastas.
-   Hoj om markoren kryper nar du haller stilla. */
+/* Rorelser kortare an sa har manga steg halls tillbaka som darr. De
+   kastas inte utan samlas, sa ett langsamt men stadigt drag slapps igenom
+   sa fort det samlade nog, medan skak som gungar fram och tillbaka tar ut
+   sig sjalvt och aldrig nar troskeln. Hoj om markoren kryper. */
 #define DODZON 3
+
+/* Rorelsen fordelas over sa har manga avlasningar vid laga farter, sa att
+   plattans grovhet inte syns som hack. Ingenting gar forlorat, det
+   fordelas bara. Hogre varde ger mjukare men trogare. 1 stanger av. */
+#define SPRID 3
+
+/* Snabbare an sa har behovs ingen fordelning, och da slas den av sa att
+   snabba drag inte kanns fordrojda. */
+#define SPRID_FART 3000
 
 /* Prov som slangs direkt efter nedsattning. Det forsta ar ofta skevt. */
 #define INKORNING 2
@@ -124,7 +135,7 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
    hogre ger mjukare men slapper fram mer av bagen. 1000 stanger av.
    LAS_SLAPP: sa har langt at sidan behover du styra for att laset ska
    slappa helt, i plattans steg. Hogre varde ger ett starkare las. */
-#define LAS_START 400
+#define LAS_START 120
 #define LAS_KVOT 150
 #define LAS_KVAR 150
 #define LAS_SLAPP 600
@@ -170,6 +181,11 @@ struct paljett_data {
     int64_t nere_us;
     int32_t vandring;
     bool skrollzon;
+
+    int32_t smyg_x;
+    int32_t smyg_y;
+    int32_t pool_x;
+    int32_t pool_y;
 
     int32_t fl_x;
     int32_t fl_y;
@@ -342,6 +358,10 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         d->ack_hjul = 0;
         d->hjul_fart = 0;
         d->fart = 0;
+        d->smyg_x = 0;
+        d->smyg_y = 0;
+        d->pool_x = 0;
+        d->pool_y = 0;
         d->fl_x = 0;
         d->fl_y = 0;
         d->las_lage = 0;
@@ -404,7 +424,15 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
         }
     }
 
-    if (vektorlangd(dx, dy) < DODZON) {
+    d->smyg_x += dx;
+    d->smyg_y += dy;
+
+    if (vektorlangd(d->smyg_x, d->smyg_y) >= DODZON) {
+        dx = d->smyg_x;
+        dy = d->smyg_y;
+        d->smyg_x = 0;
+        d->smyg_y = 0;
+    } else {
         dx = 0;
         dy = 0;
     }
@@ -524,8 +552,23 @@ static void behandla_prov(struct paljett_data *d, const struct paljett_konfig *k
             }
         }
 
-        d->ack_x += dx * faktor;
-        d->ack_y += dy * faktor;
+        /* Rorelsen laggs i en pool som toms med en andel per avlasning.
+           En knyck fordelas darmed over nagra avlasningar i stallet for
+           att komma pa en gang, utan att nagon strackra gar forlorad.
+           Vid hog fart tas hela poolen direkt. */
+        int32_t sprid = (d->fart >= SPRID_FART) ? 1 : SPRID;
+
+        d->pool_x += dx * 1000;
+        d->pool_y += dy * 1000;
+
+        int32_t del_x = d->pool_x / sprid;
+        int32_t del_y = d->pool_y / sprid;
+
+        d->pool_x -= del_x;
+        d->pool_y -= del_y;
+
+        d->ack_x += (int32_t)(((int64_t)del_x * faktor) / 1000);
+        d->ack_y += (int32_t)(((int64_t)del_y * faktor) / 1000);
 
         bool nog_lang = ((int64_t)d->ack_x * d->ack_x + (int64_t)d->ack_y * d->ack_y) >=
                         ((int64_t)TROSKEL * TROSKEL);
