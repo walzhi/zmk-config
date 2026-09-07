@@ -118,7 +118,7 @@ LOG_MODULE_REGISTER(paljett_accel, CONFIG_ZMK_LOG_LEVEL);
    finjustering inte motarbetas. 0 dampar alltid. */
 #define RAK_GRANS 450
 #define RAK_MIN 350
-#define RAK_MIN_FART 1500
+#define RAK_MIN_FART 400
 
 /* Bordslaget speglar plattan. Satt 1 pa Y ocksa om du vrider ett halvt
    varv i stallet for att vanda den. */
