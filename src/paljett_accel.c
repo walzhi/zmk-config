@@ -1,19 +1,3 @@
-    /* ett enskilt ryck far inte slappas igenom helt - overskottet
-       sparas och matas ut over foljande rapporter */
-    int tak = (d->fart / 100) + 3;
-    int v = event->value;
-    int *spar = (event->code == INPUT_REL_X) ? &d->spar_x : &d->spar_y;
-    v += *spar;
-    if (v > tak) {
-        *spar = v - tak;
-        v = tak;
-    } else if (v < -tak) {
-        *spar = v + tak;
-        v = -tak;
-    } else {
-        *spar = 0;
-    }
-    event->value = v;
 /*
  * Paljett - styrplatta i absolutlage for ZMK
  *
