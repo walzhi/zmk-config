@@ -1,5 +1,12 @@
 include:
   - board: xiao_ble
     shield: paljett
+
   - board: xiao_ble
     shield: settings_reset
+
+  - board: xiao_ble
+    shield: paljett
+    artifact-name: paljett-diagnostic-reset
+    snippet: zmk-usb-logging
+    cmake-args: -DCONFIG_ZMK_SETTINGS_RESET_ON_START=y -DCONFIG_ZMK_SLEEP=n -DCONFIG_LOG_PROCESS_THREAD_STARTUP_DELAY_MS=8000
