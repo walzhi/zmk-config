@@ -1,6 +1,12 @@
 include:
   - board: xiao_ble
     shield: paljett
+    artifact-name: paljett-power-test
+    snippet: zmk-usb-logging
+    cmake-args: -DCONFIG_PALJETT_SENSOR_POWER_TEST=y -DCONFIG_ZMK_SLEEP=n -DCONFIG_INPUT_LOG_LEVEL_DBG=y -DCONFIG_ZMK_LOG_LEVEL_DBG=y -DCONFIG_LOG_BUFFER_SIZE=16384 -DCONFIG_LOG_PROCESS_THREAD_STARTUP_DELAY_MS=8000
+
+  - board: xiao_ble
+    shield: paljett
 
   - board: xiao_ble
     shield: settings_reset
