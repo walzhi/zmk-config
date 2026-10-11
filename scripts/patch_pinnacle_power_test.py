@@ -3,7 +3,7 @@
 
 The injection is guarded by CONFIG_PALJETT_SENSOR_POWER_TEST; it does not
 change normal firmware. Run after patch_pinnacle_driver.py. Fail closed if
-upstream anchors change. SPI is slowed to 100 kHz in this diagnostic because
+upstream anchors change. SPI is slowed to 125 kHz in this diagnostic because
 the Cirque interface note flags special wake handling at >= 1 MHz.
 """
 from pathlib import Path
@@ -63,7 +63,7 @@ static void paljett_test_boot(void)
         hwinfo_clear_reset_cause();
     }
     LOG_INF("PALJETT test: USB/BT stay awake; only sensor shuts down after 30s idle");
-    LOG_INF("PALJETT test: SPI=100kHz; IRQ and packet handling stay enabled");
+    LOG_INF("PALJETT test: SPI=125kHz; IRQ and packet handling stay enabled");
 }
 
 static void paljett_test_start(const struct device *dev)
@@ -160,6 +160,12 @@ def replace_once(source, old, new):
 def patch_driver(path):
     source = path.read_text()
     if MARKER in source:
+        updated = source.replace('paljett_spi.config.frequency = 100000;',
+                                 'paljett_spi.config.frequency = 125000;')
+        updated = updated.replace('SPI=100kHz', 'SPI=125kHz')
+        if updated != source:
+            path.write_text(updated)
+            return 'Updated Paljett sensor power test to 125 kHz (nRF52840 minimum).'
         return 'Paljett sensor power test is already present.'
     source = replace_once(source, '#include <zephyr/sys/util.h>',
                           '#include <zephyr/sys/util.h>' + HEADERS)
@@ -191,7 +197,7 @@ def patch_driver(path):
         body = body.replace('{', '''{
     struct spi_dt_spec paljett_spi = bus->spi;
 #if defined(CONFIG_PALJETT_SENSOR_POWER_TEST)
-    paljett_spi.config.frequency = 100000;
+    paljett_spi.config.frequency = 125000;
 #endif
 ''', 1)
         source = source[:opening] + body + source[ending:]
