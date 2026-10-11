@@ -19,6 +19,24 @@ if(DEFINED ZEPHYR_BASE)
 
   message(STATUS "${PINNACLE_PATCH_OUTPUT}")
 
+  if(CONFIG_PALJETT_SENSOR_SLEEP)
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_LIST_DIR}/scripts/patch_pinnacle_sleep.py"
+              "${ZEPHYR_BASE}/drivers/input/input_pinnacle.c"
+      RESULT_VARIABLE PALJETT_SLEEP_PATCH_RESULT
+      OUTPUT_VARIABLE PALJETT_SLEEP_PATCH_OUTPUT
+      ERROR_VARIABLE PALJETT_SLEEP_PATCH_ERROR
+    )
+    if(NOT PALJETT_SLEEP_PATCH_RESULT EQUAL 0)
+      message(FATAL_ERROR
+        "Could not apply Paljett sensor deep sleep support. "
+        "${PALJETT_SLEEP_PATCH_ERROR}${PALJETT_SLEEP_PATCH_OUTPUT}"
+      )
+    endif()
+    message(STATUS "${PALJETT_SLEEP_PATCH_OUTPUT}")
+  endif()
+
   if(CONFIG_PALJETT_SENSOR_POWER_TEST)
     execute_process(
       COMMAND "${Python3_EXECUTABLE}"
