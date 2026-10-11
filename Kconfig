@@ -2,3 +2,13 @@ config PALJETT_ACCEL
     bool "Paljett pointer acceleration"
     default y
     depends on ZMK_POINTING
+
+config PALJETT_SENSOR_POWER_TEST
+    bool "Paljett USB sensor shutdown diagnostic"
+    default n
+    depends on ZMK_POINTING && SPI
+    select HWINFO
+    help
+      Keep USB and Bluetooth awake while testing the sensor shutdown command.
+      After 30 seconds without touch, shut down the sensor until hardware reset.
+      This diagnostic does not test whole-board deep sleep or measure current.
