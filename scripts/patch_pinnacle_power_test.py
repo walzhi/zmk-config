@@ -9,7 +9,7 @@ the Cirque interface note flags special wake handling at >= 1 MHz.
 from pathlib import Path
 import sys
 
-MARKER = '/* PALJETT_SENSOR_POWER_TEST_V1 */'
+MARKER = '/* PALJETT_SENSOR_POWER_TEST_V2 */'
 
 HEADERS = '''
 #if defined(CONFIG_PALJETT_SENSOR_POWER_TEST)
@@ -20,7 +20,7 @@ HEADERS = '''
 '''
 
 CODE = r'''
-/* PALJETT_SENSOR_POWER_TEST_V1 */
+/* PALJETT_SENSOR_POWER_TEST_V2 */
 #if defined(CONFIG_PALJETT_SENSOR_POWER_TEST)
 static const struct device *paljett_test_dev;
 static atomic_t paljett_test_irqs;
@@ -29,6 +29,8 @@ static uint32_t paljett_test_previous_packets;
 static int64_t paljett_test_last_touch;
 static int64_t paljett_test_last_log;
 static bool paljett_test_shutdown_attempted;
+static bool paljett_test_spi_quiet;
+static unsigned int paljett_test_shutdown_irqs;
 
 static void paljett_test_bt_connected(struct bt_conn *conn, uint8_t err)
 {
@@ -54,7 +56,7 @@ static void paljett_test_boot(void)
 {
     uint32_t cause = 0;
     int rc = hwinfo_get_reset_cause(&cause);
-    LOG_INF("PALJETT POWER TEST v1: boot; reset-cause rc=%d flags=0x%08x", rc, cause);
+    LOG_INF("PALJETT POWER TEST v2: boot; reset-cause rc=%d flags=0x%08x", rc, cause);
     if (rc == 0) {
         LOG_INF("PALJETT reset: pin=%d power=%d software=%d watchdog=%d low-power=%d",
                 !!(cause & RESET_PIN), !!(cause & RESET_POR),
@@ -63,7 +65,7 @@ static void paljett_test_boot(void)
         hwinfo_clear_reset_cause();
     }
     LOG_INF("PALJETT test: USB/BT stay awake; only sensor shuts down after 30s idle");
-    LOG_INF("PALJETT test: SPI=125kHz; IRQ and packet handling stay enabled");
+    LOG_INF("PALJETT test: SPI=125kHz; IRQ stays enabled; SPI stops after shutdown write");
 }
 
 static void paljett_test_start(const struct device *dev)
@@ -95,14 +97,12 @@ static void paljett_test_monitor(struct k_work *work)
             rc = pinnacle_write(paljett_test_dev, PINNACLE_REG_SYS_CONFIG1, value);
             LOG_INF("PALJETT shutdown write: SPI transfer rc=%d value=0x%02x", rc, value);
             if (rc == 0) {
-                k_msleep(2);
-                value = 0;
-                rc = pinnacle_read(paljett_test_dev, PINNACLE_REG_SYS_CONFIG1, &value);
-                if (rc == 0 && (value & PINNACLE_SYS_CONFIG1_SHUTDOWN)) {
-                    LOG_INF("PALJETT shutdown bit VERIFIED: SysConfig1=0x%02x", value);
-                } else {
-                    LOG_ERR("PALJETT shutdown NOT verified: read rc=%d value=0x%02x", rc, value);
-                }
+                paljett_test_spi_quiet = true;
+                paljett_test_shutdown_irqs = (unsigned int)atomic_get(&paljett_test_irqs);
+                LOG_INF("PALJETT shutdown SENT; no readback, no further SPI until reset");
+                LOG_INF("PALJETT only GPIO/IRQ monitored; shutdown bit is not read again");
+            } else {
+                LOG_ERR("PALJETT shutdown write FAILED; test cannot confirm shutdown");
             }
         }
         paljett_test_previous_packets = paljett_test_packets;
@@ -112,17 +112,20 @@ static void paljett_test_monitor(struct k_work *work)
 
     if (now - paljett_test_last_log >= 5000) {
         uint32_t delta = paljett_test_packets - paljett_test_previous_packets;
-        value = 0;
-        rc = pinnacle_read(paljett_test_dev, PINNACLE_REG_SYS_CONFIG1, &value);
         int dr = gpio_pin_get_dt(&config->dr_gpio);
-        LOG_INF("PALJETT monitor: phase=%s idle_ms=%u read_rc=%d config=0x%02x shutdown=%d DR=%d IRQs=%u packets=%u delta=%u",
-                paljett_test_shutdown_attempted ? "after-command" : "active",
-                (unsigned int)(now - paljett_test_last_touch), rc, value,
-                rc == 0 ? !!(value & PINNACLE_SYS_CONFIG1_SHUTDOWN) : -1,
-                dr, (unsigned int)atomic_get(&paljett_test_irqs),
-                paljett_test_packets, delta);
-        if (paljett_test_shutdown_attempted && delta != 0) {
-            LOG_WRN("PALJETT packets arrived after shutdown attempt; inspect touch data (first interval may contain a pending packet)");
+        unsigned int irqs = (unsigned int)atomic_get(&paljett_test_irqs);
+        if (paljett_test_spi_quiet) {
+            LOG_INF("PALJETT quiet monitor: SPI=OFF DR=%d IRQs_after_command=%u IRQs_total=%u",
+                    dr, irqs - paljett_test_shutdown_irqs, irqs);
+            if (irqs != paljett_test_shutdown_irqs || dr > 0) {
+                LOG_WRN("PALJETT sensor signalled data-ready after shutdown; SPI remains untouched (a pending IRQ is possible)");
+            }
+        } else {
+            value = 0;
+            rc = pinnacle_read(paljett_test_dev, PINNACLE_REG_SYS_CONFIG1, &value);
+            LOG_INF("PALJETT active monitor: idle_ms=%u read_rc=%d config=0x%02x DR=%d IRQs=%u packets=%u delta=%u",
+                    (unsigned int)(now - paljett_test_last_touch), rc, value,
+                    dr, irqs, paljett_test_packets, delta);
         }
         paljett_test_previous_packets = paljett_test_packets;
         paljett_test_last_log = now;
@@ -160,17 +163,21 @@ def replace_once(source, old, new):
 def patch_driver(path):
     source = path.read_text()
     if MARKER in source:
-        updated = source.replace('paljett_spi.config.frequency = 100000;',
-                                 'paljett_spi.config.frequency = 125000;')
-        updated = updated.replace('SPI=100kHz', 'SPI=125kHz')
-        if updated != source:
-            path.write_text(updated)
-            return 'Updated Paljett sensor power test to 125 kHz (nRF52840 minimum).'
-        return 'Paljett sensor power test is already present.'
+        return 'Paljett sensor power test v2 is already present.'
+    if '/* PALJETT_SENSOR_POWER_TEST_V1 */' in source:
+        raise RuntimeError('Old v1 diagnostic found in Zephyr source. Use a fresh GitHub Actions checkout/build.')
     source = replace_once(source, '#include <zephyr/sys/util.h>',
                           '#include <zephyr/sys/util.h>' + HEADERS)
     source = replace_once(source, 'static int pinnacle_handle_interrupt(const struct device *dev)',
                           CODE + '\nstatic int pinnacle_handle_interrupt(const struct device *dev)')
+    source = replace_once(source,
+                          '\trc = pinnacle_sample_fetch(dev, sample);',
+                          '#if defined(CONFIG_PALJETT_SENSOR_POWER_TEST)\n'
+                          '\tif (paljett_test_spi_quiet) {\n'
+                          '\t\tLOG_WRN("PALJETT data-ready IRQ after shutdown; packet NOT read to avoid SPI wake");\n'
+                          '\t\treturn 0;\n'
+                          '\t}\n#endif\n'
+                          '\trc = pinnacle_sample_fetch(dev, sample);')
     source = replace_once(source, '\tif (config->relative_mode) {\n\t\tinput_report_rel',
                           PACKETS + '\n\tif (config->relative_mode) {\n\t\tinput_report_rel')
     source = replace_once(source, '\tk_work_submit(&drv_data->work);',
@@ -202,7 +209,7 @@ def patch_driver(path):
 ''', 1)
         source = source[:opening] + body + source[ending:]
     path.write_text(source)
-    return 'Applied Paljett USB sensor shutdown diagnostic v1.'
+    return 'Applied Paljett USB sensor shutdown diagnostic v2.'
 
 
 def main():
