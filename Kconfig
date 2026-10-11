@@ -3,6 +3,17 @@ config PALJETT_ACCEL
     default y
     depends on ZMK_POINTING
 
+config PALJETT_SENSOR_SLEEP
+    bool "Shut down the Paljett sensor before system deep sleep"
+    default y
+    depends on ZMK_SLEEP && ZMK_POINTING && SPI
+    select PM_DEVICE
+    help
+      Send the Pinnacle shutdown command before ZMK powers off the XIAO.
+      No sensor readback is performed after shutdown. Hardware reset restarts
+      both the MCU and the sensor. USB diagnostics with ZMK_SLEEP=n do not
+      enable this feature.
+
 config PALJETT_SENSOR_POWER_TEST
     bool "Paljett USB sensor shutdown diagnostic"
     default n
