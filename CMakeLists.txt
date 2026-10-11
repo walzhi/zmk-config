@@ -1,3 +1,25 @@
+if(DEFINED ZEPHYR_BASE)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/scripts/patch_pinnacle_driver.py"
+            "${ZEPHYR_BASE}/drivers/input/input_pinnacle.c"
+    RESULT_VARIABLE PINNACLE_PATCH_RESULT
+    OUTPUT_VARIABLE PINNACLE_PATCH_OUTPUT
+    ERROR_VARIABLE PINNACLE_PATCH_ERROR
+  )
+
+  if(NOT PINNACLE_PATCH_RESULT EQUAL 0)
+    message(FATAL_ERROR
+      "Could not apply Paljett's bounded Cirque startup recovery patch. "
+      "${PINNACLE_PATCH_ERROR}${PINNACLE_PATCH_OUTPUT}"
+    )
+  endif()
+
+  message(STATUS "${PINNACLE_PATCH_OUTPUT}")
+endif()
+
 if(CONFIG_PALJETT_ACCEL)
   zephyr_library()
   zephyr_library_sources(src/paljett_accel.c)
