@@ -77,6 +77,7 @@
         spi-cpha;
         data-ready-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
         data-mode = "absolute";
+        sensitivity = "2x";
         idle-packets-count = <30>;
         invert-y;
     };
