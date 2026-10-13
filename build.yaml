@@ -7,7 +7,8 @@ include:
 
   - board: xiao_ble
     shield: paljett
-    artifact-name: paljett-deep-sleep
+    artifact-name: paljett-2x-sleep-15min
+    cmake-args: -DCONFIG_ZMK_SLEEP=y -DCONFIG_ZMK_IDLE_SLEEP_TIMEOUT=900000 -DCONFIG_PALJETT_SENSOR_SLEEP=y -DCONFIG_PALJETT_SENSOR_POWER_TEST=n -DCONFIG_LOG=n
 
   - board: xiao_ble
     shield: settings_reset
